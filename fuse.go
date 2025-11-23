@@ -121,9 +121,14 @@ var _ fs.NodeReadlinker = (*fuseNode)(nil)
 // newFuseFS creates a new FUSE filesystem adapter
 func newFuseFS(absFS absfs.FileSystem, opts *MountOptions) *FuseFS {
 	fuseFS := &FuseFS{
-		absFS:         absFS,
-		opts:          opts,
-		inodeManager:  NewInodeManager(),
+		absFS: absFS,
+		opts:  opts,
+		inodeManager: NewInodeManager(
+			opts.MaxCachedInodes,
+			opts.MaxCachedDirs,
+			opts.AttrCacheTTL,
+			opts.DirCacheTTL,
+		),
 		handleTracker: NewHandleTracker(),
 		stats:         newStatsCollector(),
 	}
@@ -145,6 +150,7 @@ func newFuseFS(absFS absfs.FileSystem, opts *MountOptions) *FuseFS {
 //   - Errors: Total number of errors encountered
 //   - OpenFiles: Number of currently open file handles
 //   - Mountpoint: The path where the filesystem is mounted
+//   - InodeStats: Cache statistics from the inode manager
 //
 // Statistics are collected atomically and this method is safe to call
 // from multiple goroutines.
@@ -152,6 +158,7 @@ func (f *FuseFS) Stats() Stats {
 	stats := f.stats.snapshot()
 	stats.Mountpoint = f.opts.Mountpoint
 	stats.OpenFiles = f.handleTracker.Count()
+	stats.InodeStats = f.inodeManager.Stats()
 	return stats
 }
 

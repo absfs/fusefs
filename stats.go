@@ -14,6 +14,7 @@ import (
 //	stats := fuseFS.Stats()
 //	fmt.Printf("Operations: %d, Errors: %d\n", stats.Operations, stats.Errors)
 //	fmt.Printf("Read: %d bytes, Written: %d bytes\n", stats.BytesRead, stats.BytesWritten)
+//	fmt.Printf("Cache hit rate: %.2f%%\n", stats.InodeStats.AttrCache.HitRate*100)
 type Stats struct {
 	Mountpoint   string
 	Operations   uint64
@@ -21,7 +22,7 @@ type Stats struct {
 	BytesWritten uint64
 	Errors       uint64
 	OpenFiles    int
-	CachedInodes int
+	InodeStats   InodeManagerStats
 }
 
 // statsCollector tracks filesystem statistics

@@ -73,6 +73,8 @@ func Mount(absFS absfs.FileSystem, opts *MountOptions) (*FuseFS, error) {
 			AllowOther:    opts.AllowOther,
 			Options:       opts.Options,
 			MaxBackground: 12,
+			MaxReadAhead:  int(opts.MaxReadahead),
+			MaxWrite:      int(opts.MaxWrite),
 		},
 		AttrTimeout:  &opts.AttrTimeout,
 		EntryTimeout: &opts.EntryTimeout,
@@ -81,6 +83,11 @@ func Mount(absFS absfs.FileSystem, opts *MountOptions) (*FuseFS, error) {
 	// Add read-only option if specified
 	if opts.ReadOnly {
 		fuseOpts.MountOptions.Options = append(fuseOpts.MountOptions.Options, "ro")
+	}
+
+	// Add DirectIO option if specified
+	if opts.DirectIO {
+		fuseOpts.MountOptions.Options = append(fuseOpts.MountOptions.Options, "direct_io")
 	}
 
 	// Add default_permissions option if specified

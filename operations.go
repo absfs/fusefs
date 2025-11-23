@@ -192,6 +192,11 @@ func (fh *fuseFileHandle) Write(ctx context.Context, data []byte, off int64) (wr
 // Release closes the file handle
 func (fh *fuseFileHandle) Release(ctx context.Context) syscall.Errno {
 	fh.node.fusefs.stats.recordOperation()
+
+	// Release any locks held by this file handle
+	// The owner is derived from the handle ID for lock tracking
+	fh.node.fusefs.lockManager.ReleaseOwner(fh.handle)
+
 	return fh.node.fusefs.handleTracker.Release(fh.handle)
 }
 

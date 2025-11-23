@@ -215,6 +215,55 @@ func (fh *fuseFileHandle) Flush(ctx context.Context) syscall.Errno {
 	return 0
 }
 
+// Allocate pre-allocates space for the file (fallocate)
+func (fh *fuseFileHandle) Allocate(ctx context.Context, off uint64, size uint64, mode uint32) syscall.Errno {
+	fh.node.fusefs.stats.recordOperation()
+
+	file := fh.node.fusefs.handleTracker.Get(fh.handle)
+	if file == nil {
+		fh.node.fusefs.stats.recordError()
+		return syscall.EBADF
+	}
+
+	// Check if the underlying file supports allocation
+	// This is typically a Linux-specific feature
+	allocator, ok := file.(interface {
+		Allocate(offset int64, length int64) error
+	})
+	if !ok {
+		// If not supported, try to emulate with Truncate if mode is 0 (default allocation)
+		if mode == 0 {
+			truncater, ok := file.(interface{ Truncate(int64) error })
+			if ok {
+				info, err := file.Stat()
+				if err != nil {
+					fh.node.fusefs.stats.recordError()
+					return mapError(err)
+				}
+
+				// Only extend the file, don't shrink it
+				newSize := int64(off + size)
+				if newSize > info.Size() {
+					if err := truncater.Truncate(newSize); err != nil {
+						fh.node.fusefs.stats.recordError()
+						return mapError(err)
+					}
+				}
+				return 0
+			}
+		}
+		return syscall.ENOTSUP
+	}
+
+	// Call Allocate on the underlying file
+	if err := allocator.Allocate(int64(off), int64(size)); err != nil {
+		fh.node.fusefs.stats.recordError()
+		return mapError(err)
+	}
+
+	return 0
+}
+
 // Readdir reads directory entries
 func (n *fuseNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	n.fusefs.stats.recordOperation()
@@ -511,6 +560,192 @@ func (n *fuseNode) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAtt
 	return n.Getattr(ctx, f, out)
 }
 
+// Fsync ensures writes to the file are flushed to storage
+func (n *fuseNode) Fsync(ctx context.Context, f fs.FileHandle, flags uint32) syscall.Errno {
+	n.fusefs.stats.recordOperation()
+
+	if n.fusefs.checkUnmounting() {
+		return syscall.ENOTCONN
+	}
+
+	// If we have a file handle, sync through it
+	if fh, ok := f.(*fuseFileHandle); ok {
+		file := n.fusefs.handleTracker.Get(fh.handle)
+		if file == nil {
+			return syscall.EBADF
+		}
+
+		// Call Sync if the file supports it
+		if syncer, ok := file.(interface{ Sync() error }); ok {
+			if err := syncer.Sync(); err != nil {
+				n.fusefs.stats.recordError()
+				return mapError(err)
+			}
+		}
+	}
+
+	return 0
+}
+
+// Symlink creates a symbolic link
+func (n *fuseNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	n.fusefs.stats.recordOperation()
+
+	if n.fusefs.checkUnmounting() {
+		return nil, syscall.ENOTCONN
+	}
+
+	// Build full path
+	fullPath := filepath.Join(n.path, name)
+
+	// Check if filesystem supports symlinks
+	symlinkFS, ok := n.fusefs.absFS.(interface {
+		Symlink(oldname, newname string) error
+	})
+	if !ok {
+		return nil, syscall.ENOTSUP
+	}
+
+	// Create symlink
+	err := symlinkFS.Symlink(target, fullPath)
+	if err != nil {
+		n.fusefs.stats.recordError()
+		return nil, mapError(err)
+	}
+
+	// Invalidate parent directory cache
+	n.fusefs.inodeManager.InvalidateDir(n.path)
+
+	// Get link info (using Lstat to get the link itself, not its target)
+	var info os.FileInfo
+	if lstatFS, ok := n.fusefs.absFS.(interface {
+		Lstat(name string) (os.FileInfo, error)
+	}); ok {
+		info, err = lstatFS.Lstat(fullPath)
+	} else {
+		// Fall back to Stat if Lstat not available
+		info, err = n.fusefs.absFS.Stat(fullPath)
+	}
+
+	if err != nil {
+		n.fusefs.stats.recordError()
+		return nil, mapError(err)
+	}
+
+	// Allocate inode
+	ino := n.fusefs.inodeManager.GetInode(fullPath, info)
+
+	// Fill entry attributes
+	n.fillAttr(&out.Attr, info, ino)
+	out.SetEntryTimeout(n.fusefs.opts.EntryTimeout)
+	out.SetAttrTimeout(n.fusefs.opts.AttrTimeout)
+
+	// Create child node
+	child := &fuseNode{
+		fusefs: n.fusefs,
+		path:   fullPath,
+	}
+
+	// Create the inode
+	childInode := n.NewInode(ctx, child, fs.StableAttr{
+		Mode: syscall.S_IFLNK,
+		Ino:  ino,
+	})
+
+	return childInode, 0
+}
+
+// Link creates a hard link
+func (n *fuseNode) Link(ctx context.Context, target fs.InodeEmbedder, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	n.fusefs.stats.recordOperation()
+
+	if n.fusefs.checkUnmounting() {
+		return nil, syscall.ENOTCONN
+	}
+
+	// Get target node
+	targetNode, ok := target.(*fuseNode)
+	if !ok {
+		return nil, syscall.EINVAL
+	}
+
+	// Build new path
+	newPath := filepath.Join(n.path, name)
+
+	// Check if filesystem supports hard links
+	linkFS, ok := n.fusefs.absFS.(interface {
+		Link(oldname, newname string) error
+	})
+	if !ok {
+		return nil, syscall.ENOTSUP
+	}
+
+	// Create hard link
+	err := linkFS.Link(targetNode.path, newPath)
+	if err != nil {
+		n.fusefs.stats.recordError()
+		return nil, mapError(err)
+	}
+
+	// Invalidate parent directory cache
+	n.fusefs.inodeManager.InvalidateDir(n.path)
+
+	// Get file info
+	info, err := n.fusefs.absFS.Stat(newPath)
+	if err != nil {
+		n.fusefs.stats.recordError()
+		return nil, mapError(err)
+	}
+
+	// Use the same inode as the target (hard links share inodes)
+	ino := n.fusefs.inodeManager.GetInode(newPath, info)
+
+	// Fill entry attributes
+	n.fillAttr(&out.Attr, info, ino)
+	out.SetEntryTimeout(n.fusefs.opts.EntryTimeout)
+	out.SetAttrTimeout(n.fusefs.opts.AttrTimeout)
+
+	// Create child node
+	child := &fuseNode{
+		fusefs: n.fusefs,
+		path:   newPath,
+	}
+
+	// Create the inode
+	childInode := n.NewInode(ctx, child, fs.StableAttr{
+		Mode: syscall.S_IFREG,
+		Ino:  ino,
+	})
+
+	return childInode, 0
+}
+
+// Readlink reads the target of a symbolic link
+func (n *fuseNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	n.fusefs.stats.recordOperation()
+
+	if n.fusefs.checkUnmounting() {
+		return nil, syscall.ENOTCONN
+	}
+
+	// Check if filesystem supports reading symlinks
+	readlinkFS, ok := n.fusefs.absFS.(interface {
+		Readlink(name string) (string, error)
+	})
+	if !ok {
+		return nil, syscall.ENOTSUP
+	}
+
+	// Read the symlink target
+	target, err := readlinkFS.Readlink(n.path)
+	if err != nil {
+		n.fusefs.stats.recordError()
+		return nil, mapError(err)
+	}
+
+	return []byte(target), 0
+}
+
 // Helper methods
 
 // fillAttr fills a FUSE Attr structure from os.FileInfo
@@ -581,3 +816,4 @@ var _ fs.FileReader = (*fuseFileHandle)(nil)
 var _ fs.FileWriter = (*fuseFileHandle)(nil)
 var _ fs.FileReleaser = (*fuseFileHandle)(nil)
 var _ fs.FileFlusher = (*fuseFileHandle)(nil)
+var _ fs.FileAllocater = (*fuseFileHandle)(nil)

@@ -8,7 +8,15 @@ import (
 	"github.com/absfs/absfs"
 )
 
-// HandleTracker manages open file handles and their lifecycle
+// HandleTracker manages open file handles and their lifecycle.
+//
+// It provides:
+//   - Unique handle ID allocation
+//   - File handle storage and retrieval
+//   - Reference counting for shared handles
+//   - Automatic cleanup on release
+//
+// All methods are thread-safe and can be called concurrently.
 type HandleTracker struct {
 	mu         sync.RWMutex
 	handles    map[uint64]*handleEntry

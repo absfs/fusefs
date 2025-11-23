@@ -4,7 +4,16 @@ import (
 	"sync/atomic"
 )
 
-// Stats contains filesystem statistics
+// Stats contains runtime statistics about filesystem operations.
+//
+// These statistics are collected atomically and are safe to read
+// from multiple goroutines. Use FuseFS.Stats() to retrieve current values.
+//
+// Example:
+//
+//	stats := fuseFS.Stats()
+//	fmt.Printf("Operations: %d, Errors: %d\n", stats.Operations, stats.Errors)
+//	fmt.Printf("Read: %d bytes, Written: %d bytes\n", stats.BytesRead, stats.BytesWritten)
 type Stats struct {
 	Mountpoint   string
 	Operations   uint64

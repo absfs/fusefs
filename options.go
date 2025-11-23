@@ -4,7 +4,10 @@ import (
 	"time"
 )
 
-// MountOptions configures the FUSE mount
+// MountOptions configures the FUSE mount behavior and performance characteristics.
+//
+// Use DefaultMountOptions() to get a set of sensible defaults, then customize
+// as needed for your use case.
 type MountOptions struct {
 	// Mountpoint is the directory where the filesystem will be mounted
 	Mountpoint string
@@ -54,7 +57,21 @@ type MountOptions struct {
 	Debug bool
 }
 
-// DefaultMountOptions returns mount options with sensible defaults
+// DefaultMountOptions returns mount options with sensible defaults for general use.
+//
+// Default values:
+//   - AttrTimeout: 1 second (balance between consistency and performance)
+//   - EntryTimeout: 1 second
+//   - MaxReadahead: 128KB (good for sequential reads)
+//   - MaxWrite: 128KB
+//   - DefaultPermissions: true (kernel enforces permissions)
+//   - AsyncRead: true (better performance)
+//
+// Customize these values based on your use case:
+//   - For remote filesystems: increase timeouts to reduce network calls
+//   - For local filesystems: decrease timeouts for faster updates
+//   - For sequential workloads: increase MaxReadahead
+//   - For random access: decrease MaxReadahead
 func DefaultMountOptions(mountpoint string) *MountOptions {
 	return &MountOptions{
 		Mountpoint:         mountpoint,

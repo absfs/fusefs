@@ -8,7 +8,15 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-// InodeManager manages the mapping between filesystem paths and inode numbers
+// InodeManager manages the mapping between filesystem paths and inode numbers.
+//
+// It provides:
+//   - Stable inode allocation for paths
+//   - Inode cache with expiration
+//   - Directory listing cache
+//   - Detection of file changes (via mtime and size)
+//
+// All methods are thread-safe and can be called concurrently.
 type InodeManager struct {
 	mu          sync.RWMutex
 	pathToInode map[string]uint64

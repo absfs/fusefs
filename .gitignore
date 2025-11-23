@@ -43,3 +43,7 @@ coverage.html
 # FUSE mount points (for testing)
 /mnt/
 /tmp/fusefs-*
+
+# Example binaries
+/examples/*/basic
+/examples/*/main

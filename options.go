@@ -55,6 +55,28 @@ type MountOptions struct {
 
 	// Debug enables debug logging
 	Debug bool
+
+	// Cache configuration for user-space caches
+	// These control the behavior of internal caches, separate from kernel FUSE caching
+
+	// AttrCacheTTL sets how long file attributes are cached in user-space
+	// before being re-fetched from the underlying filesystem.
+	// Default: 5 seconds
+	AttrCacheTTL time.Duration
+
+	// DirCacheTTL sets how long directory listings are cached in user-space.
+	// Default: 5 seconds
+	DirCacheTTL time.Duration
+
+	// MaxCachedInodes limits the number of inodes kept in the cache.
+	// When exceeded, least recently used entries are evicted.
+	// Default: 10000, set to 0 for unlimited (not recommended)
+	MaxCachedInodes int
+
+	// MaxCachedDirs limits the number of directory listings kept in cache.
+	// When exceeded, least recently used entries are evicted.
+	// Default: 1000, set to 0 for unlimited (not recommended)
+	MaxCachedDirs int
 }
 
 // DefaultMountOptions returns mount options with sensible defaults for general use.
@@ -87,5 +109,9 @@ func DefaultMountOptions(mountpoint string) *MountOptions {
 		EntryTimeout:       1 * time.Second,
 		FSName:             "fusefs",
 		Debug:              false,
+		AttrCacheTTL:       5 * time.Second,
+		DirCacheTTL:        5 * time.Second,
+		MaxCachedInodes:    10000,
+		MaxCachedDirs:      1000,
 	}
 }

@@ -85,6 +85,9 @@ type FuseFS struct {
 	// handleTracker manages open file handles
 	handleTracker *HandleTracker
 
+	// lockManager manages file locks (flock and POSIX locks)
+	lockManager *LockManager
+
 	// stats collects filesystem statistics
 	stats *statsCollector
 
@@ -130,6 +133,7 @@ func newFuseFS(absFS absfs.FileSystem, opts *MountOptions) *FuseFS {
 			opts.DirCacheTTL,
 		),
 		handleTracker: NewHandleTracker(),
+		lockManager:   NewLockManager(),
 		stats:         newStatsCollector(),
 	}
 

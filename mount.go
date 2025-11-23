@@ -11,7 +11,32 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-// Mount mounts an absfs.FileSystem at the specified mountpoint
+// Mount mounts an absfs.FileSystem at the specified mountpoint and returns a
+// FuseFS instance that can be used to unmount and query statistics.
+//
+// The function will:
+//  1. Create the mountpoint directory if it doesn't exist
+//  2. Verify the mountpoint is empty
+//  3. Initialize the FUSE adapter with inode and handle tracking
+//  4. Mount the filesystem using go-fuse v2 library
+//
+// The returned FuseFS instance should be unmounted when done using Unmount()
+// or the filesystem can be left mounted and controlled externally.
+//
+// Example:
+//
+//	fs := memfs.NewFS()
+//	opts := fusefs.DefaultMountOptions("/tmp/mymount")
+//	fuseFS, err := fusefs.Mount(fs, opts)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer fuseFS.Unmount()
+//
+// Errors:
+//   - Returns error if mountpoint is not empty
+//   - Returns error if mount options are invalid
+//   - Returns error if FUSE mount fails (e.g., FUSE not available, permissions)
 func Mount(absFS absfs.FileSystem, opts *MountOptions) (*FuseFS, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("mount options cannot be nil")
@@ -79,7 +104,20 @@ func Mount(absFS absfs.FileSystem, opts *MountOptions) (*FuseFS, error) {
 	return fuseFS, nil
 }
 
-// Unmount unmounts the filesystem
+// Unmount gracefully unmounts the filesystem and cleans up resources.
+//
+// This method:
+//  1. Signals all pending operations to complete
+//  2. Closes all open file handles
+//  3. Clears all caches (inode, attribute, directory)
+//  4. Unmounts the FUSE filesystem
+//
+// It is safe to call Unmount multiple times; subsequent calls will be no-ops.
+//
+// Example:
+//
+//	fuseFS, _ := fusefs.Mount(fs, opts)
+//	defer fuseFS.Unmount()
 func (f *FuseFS) Unmount() error {
 	// Signal all operations to complete
 	f.unmounting.Store(true)
@@ -98,7 +136,15 @@ func (f *FuseFS) Unmount() error {
 	return nil
 }
 
-// Wait blocks until the filesystem is unmounted
+// Wait blocks until the filesystem is unmounted externally (e.g., via fusermount -u)
+// or until Unmount() is called from another goroutine.
+//
+// This is useful for keeping a mount alive until the user manually unmounts it:
+//
+//	fuseFS, _ := fusefs.Mount(fs, opts)
+//	defer fuseFS.Unmount()
+//	log.Println("Filesystem mounted, press Ctrl+C to unmount")
+//	fuseFS.Wait()
 func (f *FuseFS) Wait() error {
 	if f.server == nil {
 		return fmt.Errorf("filesystem not mounted")
@@ -108,7 +154,16 @@ func (f *FuseFS) Wait() error {
 	return nil
 }
 
-// MountAndWait mounts a filesystem and waits for it to be unmounted
+// MountAndWait is a convenience function that mounts a filesystem and waits
+// for it to be unmounted. This is equivalent to calling Mount() followed by Wait().
+//
+// This is the simplest way to mount a filesystem and keep it alive:
+//
+//	fs := memfs.NewFS()
+//	opts := fusefs.DefaultMountOptions("/tmp/mymount")
+//	if err := fusefs.MountAndWait(fs, opts); err != nil {
+//	    log.Fatal(err)
+//	}
 func MountAndWait(absFS absfs.FileSystem, opts *MountOptions) error {
 	fuseFS, err := Mount(absFS, opts)
 	if err != nil {

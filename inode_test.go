@@ -25,7 +25,7 @@ func (m *mockFileInfo) IsDir() bool        { return m.isDir }
 func (m *mockFileInfo) Sys() interface{}   { return nil }
 
 func TestInodeManager_GetInode(t *testing.T) {
-	im := NewInodeManager()
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
 
 	info1 := &mockFileInfo{
 		name:    "test.txt",
@@ -72,7 +72,7 @@ func TestInodeManager_GetInode(t *testing.T) {
 }
 
 func TestInodeManager_Cache(t *testing.T) {
-	im := NewInodeManager()
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
 
 	info := &mockFileInfo{
 		name:    "test.txt",
@@ -108,7 +108,8 @@ func TestInodeManager_Cache(t *testing.T) {
 }
 
 func TestInodeManager_CacheExpiration(t *testing.T) {
-	im := NewInodeManager()
+	// Test with very short TTL
+	im := NewInodeManager(1000, 100, 50*time.Millisecond, 50*time.Millisecond)
 
 	info := &mockFileInfo{
 		name:    "test.txt",
@@ -126,22 +127,24 @@ func TestInodeManager_CacheExpiration(t *testing.T) {
 	}
 	im.Cache("/test.txt", attr)
 
-	// Manually expire the cache by setting timestamp to past
-	im.mu.Lock()
-	if cached, exists := im.inodeToInfo[ino]; exists {
-		cached.timestamp = time.Now().Add(-10 * time.Second)
+	// Should be cached immediately
+	cached := im.GetCached("/test.txt")
+	if cached == nil {
+		t.Error("Expected cached attr immediately after caching")
 	}
-	im.mu.Unlock()
+
+	// Wait for expiration
+	time.Sleep(60 * time.Millisecond)
 
 	// Should now return nil due to expiration
-	cached := im.GetCached("/test.txt")
+	cached = im.GetCached("/test.txt")
 	if cached != nil {
 		t.Error("Expected nil for expired cache")
 	}
 }
 
 func TestInodeManager_DirCache(t *testing.T) {
-	im := NewInodeManager()
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
 
 	entries := []fuse.DirEntry{
 		{Name: "file1.txt", Ino: 1, Mode: 0644},
@@ -171,7 +174,7 @@ func TestInodeManager_DirCache(t *testing.T) {
 }
 
 func TestInodeManager_InvalidateDir(t *testing.T) {
-	im := NewInodeManager()
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
 
 	entries := []fuse.DirEntry{
 		{Name: "file1.txt", Ino: 1, Mode: 0644},
@@ -196,7 +199,7 @@ func TestInodeManager_InvalidateDir(t *testing.T) {
 }
 
 func TestInodeManager_Clear(t *testing.T) {
-	im := NewInodeManager()
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
 
 	info := &mockFileInfo{
 		name:    "test.txt",
@@ -223,11 +226,72 @@ func TestInodeManager_Clear(t *testing.T) {
 		t.Error("Expected nil dir cache after clear")
 	}
 
-	// Path should no longer have inode
-	im.mu.RLock()
-	_, exists := im.pathToInode["/test.txt"]
-	im.mu.RUnlock()
-	if exists {
-		t.Error("Expected path to be cleared")
+	// Stats should show zero inodes
+	stats := im.Stats()
+	if stats.TotalInodes != 0 {
+		t.Errorf("Expected 0 total inodes after clear, got %d", stats.TotalInodes)
+	}
+}
+
+func TestInodeManager_Stats(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+
+	info := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: time.Now(),
+		isDir:   false,
+	}
+
+	// Allocate some inodes
+	im.GetInode("/test1.txt", info)
+	im.GetInode("/test2.txt", info)
+	im.GetInode("/test3.txt", info)
+
+	stats := im.Stats()
+	if stats.TotalInodes != 3 {
+		t.Errorf("Expected 3 total inodes, got %d", stats.TotalInodes)
+	}
+}
+
+func TestInodeManager_LRUEviction(t *testing.T) {
+	// Create manager with small cache
+	im := NewInodeManager(3, 3, 5*time.Second, 5*time.Second)
+
+	info := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: time.Now(),
+		isDir:   false,
+	}
+
+	// Cache 3 attributes
+	ino1 := im.GetInode("/test1.txt", info)
+	attr1 := &fuse.Attr{Ino: ino1, Size: 100}
+	im.Cache("/test1.txt", attr1)
+
+	ino2 := im.GetInode("/test2.txt", info)
+	attr2 := &fuse.Attr{Ino: ino2, Size: 100}
+	im.Cache("/test2.txt", attr2)
+
+	ino3 := im.GetInode("/test3.txt", info)
+	attr3 := &fuse.Attr{Ino: ino3, Size: 100}
+	im.Cache("/test3.txt", attr3)
+
+	// All should be cached
+	if im.GetCached("/test1.txt") == nil {
+		t.Error("Expected test1.txt to be cached")
+	}
+
+	// Add one more, should evict oldest
+	ino4 := im.GetInode("/test4.txt", info)
+	attr4 := &fuse.Attr{Ino: ino4, Size: 100}
+	im.Cache("/test4.txt", attr4)
+
+	// test1.txt might be evicted (LRU), but we can't guarantee the order
+	// Just verify that the cache size is limited
+	stats := im.Stats()
+	if stats.AttrCache.Size > 3 {
+		t.Errorf("Expected cache size <= 3, got %d", stats.AttrCache.Size)
 	}
 }

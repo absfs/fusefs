@@ -47,3 +47,8 @@ coverage.html
 # Example binaries
 /examples/*/basic
 /examples/*/main
+
+# Claude AI files
+.claude/
+CLAUDE.md
+.project_meta/

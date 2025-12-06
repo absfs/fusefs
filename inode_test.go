@@ -2,6 +2,7 @@ package fusefs
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,5 +294,247 @@ func TestInodeManager_LRUEviction(t *testing.T) {
 	stats := im.Stats()
 	if stats.AttrCache.Size > 3 {
 		t.Errorf("Expected cache size <= 3, got %d", stats.AttrCache.Size)
+	}
+}
+
+// Additional Inode Tests for Phase 3
+
+func TestInodeManager_InvalidateAttr(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+
+	info := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: time.Now(),
+		isDir:   false,
+	}
+
+	ino := im.GetInode("/test.txt", info)
+	attr := &fuse.Attr{Ino: ino, Size: 100}
+	im.Cache("/test.txt", attr)
+
+	// Verify cached
+	if im.GetCached("/test.txt") == nil {
+		t.Fatal("Expected attr to be cached")
+	}
+
+	// Invalidate
+	im.InvalidateAttr("/test.txt")
+
+	// Should be nil now
+	if im.GetCached("/test.txt") != nil {
+		t.Error("Expected nil after invalidation")
+	}
+}
+
+func TestInodeManager_ConcurrentAccess(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+	var wg sync.WaitGroup
+
+	// Concurrent inode allocations
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			info := &mockFileInfo{
+				name:    "test.txt",
+				size:    int64(id),
+				modTime: time.Now(),
+				isDir:   false,
+			}
+			path := "/file" + string(rune(id)) + ".txt"
+			ino := im.GetInode(path, info)
+			if ino == 0 {
+				t.Error("Got zero inode")
+			}
+
+			// Cache and retrieve
+			attr := &fuse.Attr{Ino: ino, Size: uint64(id)}
+			im.Cache(path, attr)
+			_ = im.GetCached(path)
+		}(i)
+	}
+
+	wg.Wait()
+
+	stats := im.Stats()
+	if stats.TotalInodes < 50 {
+		t.Errorf("Expected at least 50 inodes, got %d", stats.TotalInodes)
+	}
+}
+
+func TestInodeManager_DirCacheExpiration(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 50*time.Millisecond)
+
+	entries := []fuse.DirEntry{
+		{Name: "file1.txt", Ino: 1, Mode: 0644},
+	}
+
+	im.CacheDir("/mydir", entries)
+
+	// Should be cached immediately
+	if im.GetDirCache("/mydir") == nil {
+		t.Fatal("Expected dir to be cached")
+	}
+
+	// Wait for expiration
+	time.Sleep(60 * time.Millisecond)
+
+	// Should be expired
+	if im.GetDirCache("/mydir") != nil {
+		t.Error("Expected dir cache to expire")
+	}
+}
+
+func TestInodeManager_ConcurrentDirCache(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+	var wg sync.WaitGroup
+
+	// Concurrent directory cache operations
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			path := "/dir" + string(rune(id))
+			entries := []fuse.DirEntry{
+				{Name: "file.txt", Ino: uint64(id), Mode: 0644},
+			}
+			im.CacheDir(path, entries)
+			_ = im.GetDirCache(path)
+			im.InvalidateDir(path)
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestInodeManager_FileChangeDetection(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+
+	baseTime := time.Now()
+
+	info1 := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: baseTime,
+		isDir:   false,
+	}
+
+	// Get initial inode
+	ino1 := im.GetInode("/test.txt", info1)
+
+	// Same file info should return same inode
+	ino2 := im.GetInode("/test.txt", info1)
+	if ino1 != ino2 {
+		t.Error("Same file should return same inode")
+	}
+
+	// Changed size should return new inode
+	info2 := &mockFileInfo{
+		name:    "test.txt",
+		size:    200, // Different size
+		modTime: baseTime,
+		isDir:   false,
+	}
+	ino3 := im.GetInode("/test.txt", info2)
+	if ino1 == ino3 {
+		t.Error("Changed file should return different inode")
+	}
+
+	// Changed modtime should return new inode
+	info3 := &mockFileInfo{
+		name:    "test.txt",
+		size:    200,
+		modTime: baseTime.Add(time.Hour), // Different modtime
+		isDir:   false,
+	}
+	ino4 := im.GetInode("/test.txt", info3)
+	if ino3 == ino4 {
+		t.Error("Changed file should return different inode")
+	}
+}
+
+func TestInodeManager_StatsAccuracy(t *testing.T) {
+	im := NewInodeManager(1000, 100, 5*time.Second, 5*time.Second)
+
+	info := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: time.Now(),
+		isDir:   false,
+	}
+
+	// Allocate some inodes
+	for i := 0; i < 10; i++ {
+		path := "/file" + string(rune(i)) + ".txt"
+		ino := im.GetInode(path, info)
+		attr := &fuse.Attr{Ino: ino, Size: 100}
+		im.Cache(path, attr)
+	}
+
+	// Generate cache hits
+	for i := 0; i < 5; i++ {
+		path := "/file" + string(rune(i)) + ".txt"
+		im.GetCached(path)
+	}
+
+	// Generate cache misses
+	for i := 0; i < 3; i++ {
+		path := "/nonexistent" + string(rune(i)) + ".txt"
+		im.GetCached(path)
+	}
+
+	stats := im.Stats()
+	if stats.TotalInodes != 10 {
+		t.Errorf("Expected 10 inodes, got %d", stats.TotalInodes)
+	}
+	if stats.AttrCache.Hits != 5 {
+		t.Errorf("Expected 5 hits, got %d", stats.AttrCache.Hits)
+	}
+	if stats.AttrCache.Misses != 3 {
+		t.Errorf("Expected 3 misses, got %d", stats.AttrCache.Misses)
+	}
+}
+
+func BenchmarkInodeManager_GetInode(b *testing.B) {
+	im := NewInodeManager(10000, 1000, 5*time.Second, 5*time.Second)
+	info := &mockFileInfo{
+		name:    "test.txt",
+		size:    100,
+		modTime: time.Now(),
+		isDir:   false,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		path := "/file" + string(rune(i%1000)) + ".txt"
+		im.GetInode(path, info)
+	}
+}
+
+func BenchmarkInodeManager_Cache(b *testing.B) {
+	im := NewInodeManager(10000, 1000, 5*time.Second, 5*time.Second)
+	attr := &fuse.Attr{Ino: 1, Size: 100}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		path := "/file" + string(rune(i%1000)) + ".txt"
+		im.Cache(path, attr)
+	}
+}
+
+func BenchmarkInodeManager_GetCached(b *testing.B) {
+	im := NewInodeManager(10000, 1000, 5*time.Second, 5*time.Second)
+	// Pre-populate cache
+	for i := 0; i < 1000; i++ {
+		path := "/file" + string(rune(i)) + ".txt"
+		attr := &fuse.Attr{Ino: uint64(i), Size: 100}
+		im.Cache(path, attr)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		path := "/file" + string(rune(i%1000)) + ".txt"
+		im.GetCached(path)
 	}
 }

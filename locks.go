@@ -22,12 +22,18 @@ type LockManager struct {
 	mu sync.RWMutex
 
 	// BSD-style flock (whole-file locks)
-	// Maps file path -> lock owner
-	flocks map[string]uint64
+	// Maps file path -> flock state (tracks lock type and multiple owners for shared locks)
+	flocks map[string]*flockState
 
 	// POSIX locks (byte-range locks)
 	// Maps file path -> list of lock ranges
 	posixLocks map[string][]*posixLock
+}
+
+// flockState represents the state of a BSD-style flock on a file
+type flockState struct {
+	lockType uint32          // LOCK_SH or LOCK_EX
+	owners   map[uint64]bool // Set of owner IDs holding this lock
 }
 
 // posixLock represents a POSIX byte-range lock
@@ -42,7 +48,7 @@ type posixLock struct {
 // NewLockManager creates a new lock manager
 func NewLockManager() *LockManager {
 	return &LockManager{
-		flocks:     make(map[string]uint64),
+		flocks:     make(map[string]*flockState),
 		posixLocks: make(map[string][]*posixLock),
 	}
 }
@@ -189,33 +195,94 @@ func (lm *LockManager) Flock(path string, owner uint64, flags uint32) syscall.Er
 
 	// Check unlock flag
 	if flags&syscall.LOCK_UN != 0 {
-		// Unlock
-		if lm.flocks[path] == owner {
-			delete(lm.flocks, path)
+		return lm.flockUnlock(path, owner)
+	}
+
+	// Determine requested lock type
+	requestedType := uint32(syscall.LOCK_SH)
+	if flags&syscall.LOCK_EX != 0 {
+		requestedType = syscall.LOCK_EX
+	}
+
+	state, exists := lm.flocks[path]
+	if !exists {
+		// No existing lock, grant the requested lock
+		lm.flocks[path] = &flockState{
+			lockType: requestedType,
+			owners:   map[uint64]bool{owner: true},
 		}
 		return 0
 	}
 
-	// Check if file is already locked
-	if existingOwner, exists := lm.flocks[path]; exists {
-		if existingOwner == owner {
-			// Already locked by us, allow upgrade/downgrade
-			lm.flocks[path] = owner
+	// Check if this owner already has a lock
+	if state.owners[owner] {
+		// Same owner - allow upgrade/downgrade/relock
+		if requestedType == state.lockType {
+			// Same type, nothing to do
 			return 0
 		}
 
-		// Locked by someone else
-		if flags&syscall.LOCK_NB != 0 {
-			// Non-blocking, return would-block error
-			return syscall.EWOULDBLOCK
+		// Upgrading from shared to exclusive
+		if requestedType == syscall.LOCK_EX && state.lockType == syscall.LOCK_SH {
+			// Can only upgrade if this is the sole owner
+			if len(state.owners) == 1 {
+				state.lockType = syscall.LOCK_EX
+				return 0
+			}
+			// Other shared lock holders exist, can't upgrade
+			if flags&syscall.LOCK_NB != 0 {
+				return syscall.EWOULDBLOCK
+			}
+			return syscall.EAGAIN
 		}
 
-		// Blocking mode (kernel will retry)
+		// Downgrading from exclusive to shared
+		if requestedType == syscall.LOCK_SH && state.lockType == syscall.LOCK_EX {
+			state.lockType = syscall.LOCK_SH
+			return 0
+		}
+
+		return 0
+	}
+
+	// Different owner requesting a lock
+	if state.lockType == syscall.LOCK_EX {
+		// Exclusive lock held by someone else - always conflicts
+		if flags&syscall.LOCK_NB != 0 {
+			return syscall.EWOULDBLOCK
+		}
 		return syscall.EAGAIN
 	}
 
-	// Acquire the lock
-	lm.flocks[path] = owner
+	// Existing lock is shared (LOCK_SH)
+	if requestedType == syscall.LOCK_SH {
+		// Shared lock requested, and existing is shared - allow it
+		state.owners[owner] = true
+		return 0
+	}
+
+	// Exclusive lock requested, but shared locks exist
+	if flags&syscall.LOCK_NB != 0 {
+		return syscall.EWOULDBLOCK
+	}
+	return syscall.EAGAIN
+}
+
+// flockUnlock releases a flock for the given owner
+func (lm *LockManager) flockUnlock(path string, owner uint64) syscall.Errno {
+	state, exists := lm.flocks[path]
+	if !exists {
+		return 0
+	}
+
+	// Remove this owner from the lock
+	delete(state.owners, owner)
+
+	// If no owners left, remove the lock entirely
+	if len(state.owners) == 0 {
+		delete(lm.flocks, path)
+	}
+
 	return 0
 }
 
@@ -225,8 +292,9 @@ func (lm *LockManager) ReleaseOwner(owner uint64) {
 	defer lm.mu.Unlock()
 
 	// Release flocks
-	for path, lockOwner := range lm.flocks {
-		if lockOwner == owner {
+	for path, state := range lm.flocks {
+		delete(state.owners, owner)
+		if len(state.owners) == 0 {
 			delete(lm.flocks, path)
 		}
 	}

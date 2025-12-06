@@ -3,6 +3,7 @@ package fusefs
 import (
 	"errors"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 )
@@ -240,5 +241,198 @@ func TestHandleTracker_GetEntry(t *testing.T) {
 	}
 	if entry.refCount != 1 {
 		t.Errorf("Entry refCount = %d, want 1", entry.refCount)
+	}
+}
+
+// Additional Handle Tests for Phase 3
+
+func TestHandleTracker_ConcurrentAdd(t *testing.T) {
+	ht := NewHandleTracker()
+	var wg sync.WaitGroup
+	numGoroutines := 100
+
+	handles := make(chan uint64, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			file := newMockFile("/file.txt")
+			fh := ht.Add(file, os.O_RDONLY, "/file.txt")
+			handles <- fh
+		}(i)
+	}
+
+	wg.Wait()
+	close(handles)
+
+	// All handles should be unique
+	seen := make(map[uint64]bool)
+	for fh := range handles {
+		if seen[fh] {
+			t.Errorf("Duplicate handle: %d", fh)
+		}
+		seen[fh] = true
+	}
+
+	if ht.Count() != numGoroutines {
+		t.Errorf("Count = %d, want %d", ht.Count(), numGoroutines)
+	}
+}
+
+func TestHandleTracker_ConcurrentRelease(t *testing.T) {
+	ht := NewHandleTracker()
+	numHandles := 100
+
+	// Add handles
+	handles := make([]uint64, numHandles)
+	for i := 0; i < numHandles; i++ {
+		file := newMockFile("/file.txt")
+		handles[i] = ht.Add(file, os.O_RDONLY, "/file.txt")
+	}
+
+	// Concurrently release them
+	var wg sync.WaitGroup
+	for _, fh := range handles {
+		wg.Add(1)
+		go func(h uint64) {
+			defer wg.Done()
+			ht.Release(h)
+		}(fh)
+	}
+
+	wg.Wait()
+
+	if ht.Count() != 0 {
+		t.Errorf("Count = %d, want 0 after all releases", ht.Count())
+	}
+}
+
+func TestHandleTracker_ConcurrentGetAndRelease(t *testing.T) {
+	ht := NewHandleTracker()
+	var wg sync.WaitGroup
+
+	file := newMockFile("/test.txt")
+	fh := ht.Add(file, os.O_RDONLY, "/test.txt")
+
+	// Concurrent gets while the handle exists
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = ht.Get(fh)
+			_ = ht.GetEntry(fh)
+			_ = ht.Count()
+		}()
+	}
+
+	wg.Wait()
+
+	// Release the handle
+	ht.Release(fh)
+
+	// More concurrent gets after release
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := ht.Get(fh)
+			if result != nil {
+				t.Error("Expected nil for released handle")
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestHandleTracker_GetEntryNonExistent(t *testing.T) {
+	ht := NewHandleTracker()
+
+	entry := ht.GetEntry(999)
+	if entry != nil {
+		t.Error("Expected nil for non-existent handle")
+	}
+}
+
+func TestHandleTracker_UniqueHandleIDs(t *testing.T) {
+	ht := NewHandleTracker()
+
+	// Add and release many handles to ensure IDs keep incrementing
+	handles := make(map[uint64]bool)
+	for i := 0; i < 1000; i++ {
+		file := newMockFile("/test.txt")
+		fh := ht.Add(file, os.O_RDONLY, "/test.txt")
+		if handles[fh] {
+			t.Errorf("Handle %d was reused", fh)
+		}
+		handles[fh] = true
+		ht.Release(fh)
+	}
+}
+
+// mockFileWithError is a mock file that returns an error on Close
+type mockFileWithError struct {
+	mockFile
+	closeErr error
+}
+
+func (m *mockFileWithError) Close() error {
+	if m.closeErr != nil {
+		return m.closeErr
+	}
+	return m.mockFile.Close()
+}
+
+func TestHandleTracker_ReleaseWithCloseError(t *testing.T) {
+	ht := NewHandleTracker()
+
+	file := &mockFileWithError{
+		mockFile: mockFile{name: "/test.txt"},
+		closeErr: os.ErrPermission,
+	}
+
+	fh := ht.Add(file, os.O_RDONLY, "/test.txt")
+
+	errno := ht.Release(fh)
+	if errno != syscall.EACCES {
+		t.Errorf("Expected EACCES on close error, got %v", errno)
+	}
+
+	// Handle should still be removed
+	if ht.Get(fh) != nil {
+		t.Error("Handle should be removed even after close error")
+	}
+}
+
+func BenchmarkHandleTracker_Add(b *testing.B) {
+	ht := NewHandleTracker()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		file := newMockFile("/test.txt")
+		ht.Add(file, os.O_RDONLY, "/test.txt")
+	}
+}
+
+func BenchmarkHandleTracker_Get(b *testing.B) {
+	ht := NewHandleTracker()
+	file := newMockFile("/test.txt")
+	fh := ht.Add(file, os.O_RDONLY, "/test.txt")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ht.Get(fh)
+	}
+}
+
+func BenchmarkHandleTracker_AddRelease(b *testing.B) {
+	ht := NewHandleTracker()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		file := newMockFile("/test.txt")
+		fh := ht.Add(file, os.O_RDONLY, "/test.txt")
+		ht.Release(fh)
 	}
 }

@@ -267,3 +267,104 @@ func BenchmarkLRUCache_Mixed(b *testing.B) {
 		}
 	}
 }
+
+// Additional Cache Tests for Phase 3
+
+func TestLRUCache_DeleteNonExistent(t *testing.T) {
+	cache := newLRUCache(10, 0)
+
+	// Delete non-existent key should not panic
+	cache.Delete("nonexistent")
+
+	// Cache should still work
+	cache.Put("key1", "value1")
+	if _, ok := cache.Get("key1"); !ok {
+		t.Error("Expected cache to work after deleting non-existent key")
+	}
+}
+
+func TestLRUCache_EvictionStats(t *testing.T) {
+	cache := newLRUCache(3, 0)
+
+	// Fill cache
+	cache.Put("key1", "value1")
+	cache.Put("key2", "value2")
+	cache.Put("key3", "value3")
+
+	// Add more to cause evictions
+	cache.Put("key4", "value4")
+	cache.Put("key5", "value5")
+
+	stats := cache.Stats()
+	if stats.Evictions != 2 {
+		t.Errorf("Expected 2 evictions, got %d", stats.Evictions)
+	}
+}
+
+func TestLRUCache_MaxSizeStats(t *testing.T) {
+	cache := newLRUCache(5, 0)
+
+	stats := cache.Stats()
+	if stats.MaxSize != 5 {
+		t.Errorf("Expected MaxSize 5, got %d", stats.MaxSize)
+	}
+}
+
+func TestLRUCache_ZeroHitRate(t *testing.T) {
+	cache := newLRUCache(10, 0)
+
+	// Stats with no operations
+	stats := cache.Stats()
+	if stats.HitRate != 0 {
+		t.Errorf("Expected HitRate 0 with no operations, got %f", stats.HitRate)
+	}
+}
+
+func TestLRUCache_TTLNotExpired(t *testing.T) {
+	cache := newLRUCache(10, 1*time.Second)
+
+	cache.Put("key1", "value1")
+
+	// Access immediately - should not be expired
+	val, ok := cache.Get("key1")
+	if !ok || val.(string) != "value1" {
+		t.Error("Expected value to be present before TTL")
+	}
+}
+
+func TestLRUCache_UpdateMovesFront(t *testing.T) {
+	cache := newLRUCache(3, 0)
+
+	cache.Put("key1", "value1")
+	cache.Put("key2", "value2")
+	cache.Put("key3", "value3")
+
+	// Update key1 - should move it to front
+	cache.Put("key1", "updated")
+
+	// Add new key - should evict key2 (oldest non-updated)
+	cache.Put("key4", "value4")
+
+	// key1 should still be present
+	if _, ok := cache.Get("key1"); !ok {
+		t.Error("Expected key1 to be present after update")
+	}
+
+	// key2 should be evicted
+	if _, ok := cache.Get("key2"); ok {
+		t.Error("Expected key2 to be evicted")
+	}
+}
+
+func TestLRUCache_EmptyEvict(t *testing.T) {
+	cache := newLRUCache(1, 0)
+
+	// This should trigger evictOldest on empty list which should not panic
+	cache.Put("key1", "value1")
+	// Add second should trigger eviction
+	cache.Put("key2", "value2")
+
+	if cache.Len() != 1 {
+		t.Errorf("Expected size 1, got %d", cache.Len())
+	}
+}

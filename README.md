@@ -1,5 +1,10 @@
 # fusefs
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/absfs/fusefs.svg)](https://pkg.go.dev/github.com/absfs/fusefs)
+[![Go Report Card](https://goreportcard.com/badge/github.com/absfs/fusefs)](https://goreportcard.com/report/github.com/absfs/fusefs)
+[![CI](https://github.com/absfs/fusefs/actions/workflows/ci.yml/badge.svg)](https://github.com/absfs/fusefs/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 FUSE adapter for mounting any `absfs.FileSystem` as a real filesystem on Linux, macOS, and Windows.
 
 ## Overview

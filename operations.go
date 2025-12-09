@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -20,7 +20,7 @@ func (n *fuseNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Stat the file
 	info, err := n.fusefs.absFS.Stat(fullPath)
@@ -300,7 +300,7 @@ func (n *fuseNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	// Convert to FUSE directory entries
 	fuseEntries := make([]fuse.DirEntry, 0, len(infos))
 	for _, info := range infos {
-		fullPath := filepath.Join(n.path, info.Name())
+		fullPath := path.Join(n.path, info.Name())
 		ino := n.fusefs.inodeManager.GetInode(fullPath, info)
 
 		mode := uint32(syscall.S_IFREG)
@@ -330,7 +330,7 @@ func (n *fuseNode) Create(ctx context.Context, name string, flags uint32, mode u
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Map FUSE flags to absfs flags
 	absFlags := n.mapOpenFlags(flags) | os.O_CREATE
@@ -394,7 +394,7 @@ func (n *fuseNode) Mkdir(ctx context.Context, name string, mode uint32, out *fus
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Create directory
 	err := n.fusefs.absFS.Mkdir(fullPath, os.FileMode(mode))
@@ -445,7 +445,7 @@ func (n *fuseNode) Unlink(ctx context.Context, name string) syscall.Errno {
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Remove file
 	err := n.fusefs.absFS.Remove(fullPath)
@@ -469,7 +469,7 @@ func (n *fuseNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Remove directory
 	err := n.fusefs.absFS.Remove(fullPath)
@@ -493,13 +493,13 @@ func (n *fuseNode) Rename(ctx context.Context, name string, newParent fs.InodeEm
 	}
 
 	// Build paths
-	oldPath := filepath.Join(n.path, name)
+	oldPath := path.Join(n.path, name)
 
 	newParentNode, ok := newParent.(*fuseNode)
 	if !ok {
 		return syscall.EINVAL
 	}
-	newPath := filepath.Join(newParentNode.path, newName)
+	newPath := path.Join(newParentNode.path, newName)
 
 	// Rename through absfs
 	err := n.fusefs.absFS.Rename(oldPath, newPath)
@@ -601,7 +601,7 @@ func (n *fuseNode) Symlink(ctx context.Context, target, name string, out *fuse.E
 	}
 
 	// Build full path
-	fullPath := filepath.Join(n.path, name)
+	fullPath := path.Join(n.path, name)
 
 	// Check if filesystem supports symlinks
 	symlinkFS, ok := n.fusefs.absFS.(interface {
@@ -675,7 +675,7 @@ func (n *fuseNode) Link(ctx context.Context, target fs.InodeEmbedder, name strin
 	}
 
 	// Build new path
-	newPath := filepath.Join(n.path, name)
+	newPath := path.Join(n.path, name)
 
 	// Check if filesystem supports hard links
 	linkFS, ok := n.fusefs.absFS.(interface {

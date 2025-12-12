@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.7
 
 require (
-	github.com/absfs/absfs v0.9.0
+	github.com/absfs/absfs v0.9.1
 	github.com/hanwen/go-fuse/v2 v2.9.0
 )
 

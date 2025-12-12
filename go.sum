@@ -1,5 +1,5 @@
-github.com/absfs/absfs v0.9.0 h1:x4QElpUqVRhflmLAMgOazqhxH2n4nBBht+SfryzZbSs=
-github.com/absfs/absfs v0.9.0/go.mod h1:IvFD36FQcMxLLZNhs2Lms+Uosc0G3AJ2JHOJIz8E5d8=
+github.com/absfs/absfs v0.9.1 h1:oDqxVXkvKDJT6oM5vgXgM5EuN93aSrpQ8rertfHGal4=
+github.com/absfs/absfs v0.9.1/go.mod h1:IvFD36FQcMxLLZNhs2Lms+Uosc0G3AJ2JHOJIz8E5d8=
 github.com/hanwen/go-fuse/v2 v2.9.0 h1:0AOGUkHtbOVeyGLr0tXupiid1Vg7QB7M6YUcdmVdC58=
 github.com/hanwen/go-fuse/v2 v2.9.0/go.mod h1:yE6D2PqWwm3CbYRxFXV9xUd8Md5d6NG0WBs5spCswmI=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=

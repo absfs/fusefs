@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"time"
 
@@ -49,12 +50,16 @@ func (fs *osFS) Chown(name string, uid, gid int) error {
 	return os.Chown(fs.path(name), uid, gid)
 }
 
-func (fs *osFS) Separator() uint8 {
-	return os.PathSeparator
+func (fs *osFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return os.ReadDir(fs.path(name))
 }
 
-func (fs *osFS) ListSeparator() uint8 {
-	return os.PathListSeparator
+func (fs *osFS) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(fs.path(name))
+}
+
+func (fs *osFS) Sub(dir string) (absfs.Filer, error) {
+	return absfs.ExtendFiler(&osFS{root: fs.path(dir)}).Sub(dir)
 }
 
 func (fs *osFS) Chdir(dir string) error {

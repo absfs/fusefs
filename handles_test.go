@@ -2,6 +2,7 @@ package fusefs
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"sync"
 	"syscall"
@@ -59,6 +60,10 @@ func (m *mockFile) Stat() (os.FileInfo, error) {
 }
 
 func (m *mockFile) Readdir(count int) ([]os.FileInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	return nil, errors.New("not implemented")
 }
 

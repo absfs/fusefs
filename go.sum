@@ -1,6 +1,8 @@
-github.com/absfs/absfs v0.0.0-20251109181304-77e2f9ac4448 h1:uN3Q47kmtV6TIGHZbrCbCf68jWmYDWyTcqq5JuoyON4=
-github.com/absfs/absfs v0.0.0-20251109181304-77e2f9ac4448/go.mod h1:IvFD36FQcMxLLZNhs2Lms+Uosc0G3AJ2JHOJIz8E5d8=
 github.com/hanwen/go-fuse/v2 v2.9.0 h1:0AOGUkHtbOVeyGLr0tXupiid1Vg7QB7M6YUcdmVdC58=
 github.com/hanwen/go-fuse/v2 v2.9.0/go.mod h1:yE6D2PqWwm3CbYRxFXV9xUd8Md5d6NG0WBs5spCswmI=
+github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
+github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/moby/sys/mountinfo v0.7.2 h1:1shs6aH5s4o5H2zQLn796ADW1wMrIwHsyJ2v9KouLrg=
+github.com/moby/sys/mountinfo v0.7.2/go.mod h1:1YOa8w8Ih7uW0wALDUgT1dTTSBrZ+HiBLGws92L2RU4=
 golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
 golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
